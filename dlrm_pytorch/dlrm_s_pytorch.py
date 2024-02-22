@@ -253,14 +253,7 @@ def run():
         ln_emb = np.array(list(feature_to_num_embeddings.values()))
         m_den = ln_bot[0]
     else:
-        # input and target at random
-        ln_emb = np.fromstring(args.arch_embedding_size, dtype=int, sep="-")
-        m_den = ln_bot[0]
-        train_data, train_ld, test_data, test_ld = dp.make_random_data_and_loader(
-            args, ln_emb, m_den
-        )
-        nbatches = args.num_batches if args.num_batches > 0 else len(train_ld)
-        nbatches_test = len(test_ld)
+        raise ValueError("Not supported anymore.")
 
     args.ln_emb = ln_emb.tolist()
 
