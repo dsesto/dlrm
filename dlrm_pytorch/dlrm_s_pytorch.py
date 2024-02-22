@@ -14,9 +14,6 @@ import warnings
 # data generation
 import dlrm_data_pytorch as dp
 
-# For distributed run
-import extend_distributed as ext_dist
-
 # numpy
 import numpy as np
 import optim.rwsadagrad as RowWiseSparseAdagrad
@@ -122,11 +119,6 @@ def inference(
             testBatch
         )
 
-        # Skip the batch if batch size not multiple of total ranks
-        if ext_dist.my_size > 1 and X_test.size(0) % ext_dist.my_size != 0:
-            print("Warning: Skiping the batch %d with size %d" % (i, X_test.size(0)))
-            continue
-
         # forward pass
         Z_test = dlrm_wrap(
             X_test,
@@ -141,9 +133,6 @@ def inference(
         # tensor is on GPU memory
         if Z_test.is_cuda:
             torch.cuda.synchronize()
-        (_, batch_split_lengths) = ext_dist.get_split_lengths(X_test.size(0))
-        if ext_dist.my_size > 1:
-            Z_test = ext_dist.all_gather(Z_test, batch_split_lengths)
 
         with record_function("DLRM accuracy compute"):
             # compute loss and accuracy
@@ -220,20 +209,11 @@ def run():
 
     use_gpu = args.use_gpu and torch.cuda.is_available()
 
-    if not args.debug_mode:
-        ext_dist.init_distributed(
-            local_rank=args.local_rank, use_gpu=use_gpu, backend=args.dist_backend
-        )
-
     if use_gpu:
         torch.cuda.manual_seed_all(args.numpy_rand_seed)
         torch.backends.cudnn.deterministic = True
-        if ext_dist.my_size > 1:
-            ngpus = 1
-            device = torch.device("cuda", ext_dist.my_local_rank)
-        else:
-            ngpus = torch.cuda.device_count()
-            device = torch.device("cuda", 0)
+        ngpus = torch.cuda.device_count()
+        device = torch.device("cuda", 0)
         print("Using {} GPU(s)...".format(ngpus))
     else:
         device = torch.device("cpu")
@@ -466,16 +446,6 @@ def run():
                 for k, w in enumerate(dlrm.v_W_l):
                     dlrm.v_W_l[k] = w.cuda()
 
-    # distribute data parallel mlps
-    if ext_dist.my_size > 1:
-        if use_gpu:
-            device_ids = [ext_dist.my_local_rank]
-            dlrm.bot_l = ext_dist.DDP(dlrm.bot_l, device_ids=device_ids)
-            dlrm.top_l = ext_dist.DDP(dlrm.top_l, device_ids=device_ids)
-        else:
-            dlrm.bot_l = ext_dist.DDP(dlrm.bot_l)
-            dlrm.top_l = ext_dist.DDP(dlrm.top_l)
-
     if not args.inference_only:
         if use_gpu and args.optimizer in ["rwsadagrad", "adagrad"]:
             sys.exit("GPU version of Adagrad is not supported by PyTorch.")
@@ -488,7 +458,7 @@ def run():
 
         parameters = (
             dlrm.parameters()
-            if ext_dist.my_size == 1
+            if True  # TODO (dsesto): Not sure if this condition is equivalent to the previous "ext_dist.my_size == 1"
             else [
                 {
                     "params": [p for emb in dlrm.emb_l for p in emb.parameters()],
@@ -610,7 +580,6 @@ def run():
     tb_file = "./" + args.tensor_board_filename
     writer = SummaryWriter(tb_file)
 
-    ext_dist.barrier()
     with torch.autograd.profiler.profile(
         args.enable_profiling, use_cuda=use_gpu, record_shapes=True
     ) as prof:
@@ -636,14 +605,6 @@ def run():
                     if nbatches > 0 and j >= nbatches:
                         break
 
-                    # Skip the batch if batch size not multiple of total ranks
-                    if ext_dist.my_size > 1 and X.size(0) % ext_dist.my_size != 0:
-                        print(
-                            "Warning: Skiping the batch %d with size %d"
-                            % (j, X.size(0))
-                        )
-                        continue
-
                     mbs = T.shape[0]  # = args.mini_batch_size except maybe for last
 
                     # forward pass
@@ -655,10 +616,6 @@ def run():
                         device,
                         ndevices=ndevices,
                     )
-
-                    if ext_dist.my_size > 1:
-                        T = T[ext_dist.get_my_slice(mbs)]
-                        W = W[ext_dist.get_my_slice(mbs)]
 
                     # loss
                     E = loss_fn_wrap(Z, T, use_gpu, device)

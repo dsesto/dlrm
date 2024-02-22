@@ -1,6 +1,5 @@
 import sys
 
-import extend_distributed as ext_dist
 import numpy as np
 import torch
 import torch.nn as nn
@@ -56,9 +55,6 @@ class DLRM_Net(nn.Module):
         emb_l = nn.ModuleList()
         v_W_l = []
         for i in range(0, ln.size):
-            if ext_dist.my_size > 1:
-                if i not in self.local_emb_indices:
-                    continue
             n = ln[i]
 
             # construct embedding operator
@@ -158,21 +154,6 @@ class DLRM_Net(nn.Module):
             self.md_flag = md_flag
             if self.md_flag:
                 self.md_threshold = md_threshold
-
-            # If running distributed, get local slice of embedding tables
-            if ext_dist.my_size > 1:
-                n_emb = len(ln_emb)
-                if n_emb < ext_dist.my_size:
-                    sys.exit(
-                        "only (%d) sparse features for (%d) devices, table partitions will fail"
-                        % (n_emb, ext_dist.my_size)
-                    )
-                self.n_global_emb = n_emb
-                self.n_local_emb, self.n_emb_per_rank = ext_dist.get_split_lengths(
-                    n_emb
-                )
-                self.local_emb_slice = ext_dist.get_my_slice(n_emb)
-                self.local_emb_indices = list(range(n_emb))[self.local_emb_slice]
 
             # create operators
             if ndevices <= 1:
