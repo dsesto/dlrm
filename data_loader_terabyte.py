@@ -330,7 +330,7 @@ def _test_bin():
         counts_file=counts_file,
         batch_size=2048,
     )
-    from dlrm_data_pytorch import (
+    from dlrm_pytorch.dlrm_data_pytorch import (
         collate_wrapper_criteo_offset as collate_wrapper_criteo,
         CriteoDataset,
     )

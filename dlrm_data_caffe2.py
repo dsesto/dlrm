@@ -23,9 +23,8 @@ import collections
 
 # others
 # from os import path
-import sys
 
-import data_utils
+from dlrm_pytorch import data_utils
 
 # numpy
 import numpy as np

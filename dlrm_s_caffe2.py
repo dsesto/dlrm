@@ -67,7 +67,7 @@ import time
 import warnings
 
 # data generation
-import dlrm_data_pytorch as dp
+from dlrm_pytorch import dlrm_data_pytorch as dp
 
 # numpy
 import numpy as np
