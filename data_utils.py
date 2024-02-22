@@ -40,12 +40,7 @@ from __future__ import absolute_import, division, print_function, unicode_litera
 import sys
 from multiprocessing import Manager, Process
 
-# import os
 from os import path
-
-# import io
-# from io import StringIO
-# import collections as coll
 
 import numpy as np
 
