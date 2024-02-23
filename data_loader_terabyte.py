@@ -88,9 +88,9 @@ def _transform_features(
 
     batch_size = x_cat_batch.shape[0]
     feature_count = x_cat_batch.shape[1]
-    lS_o = torch.arange(batch_size).reshape(1, -1).repeat(feature_count, 1)
+    sparse_features_offsets = torch.arange(batch_size).reshape(1, -1).repeat(feature_count, 1)
 
-    return x_int_batch, lS_o, x_cat_batch.t(), y_batch.view(-1, 1)
+    return x_int_batch, sparse_features_offsets, x_cat_batch.t(), y_batch.view(-1, 1)
 
 
 def _batch_generator(
@@ -184,13 +184,13 @@ def _test():
         max_ind_range=-1,
     )
     t1 = time.time()
-    for x_int, lS_o, x_cat, y in generator:
+    for x_int, sparse_features_offsets, x_cat, y in generator:
         t2 = time.time()
         time_diff = t2 - t1
         t1 = t2
         print(
-            "time {} x_int.shape: {} lS_o.shape: {} x_cat.shape: {} y.shape: {}".format(
-                time_diff, x_int.shape, lS_o.shape, x_cat.shape, y.shape
+            "time {} x_int.shape: {} sparse_features_offsets.shape: {} x_cat.shape: {} y.shape: {}".format(
+                time_diff, x_int.shape, sparse_features_offsets.shape, x_cat.shape, y.shape
             )
         )
 

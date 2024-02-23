@@ -372,7 +372,7 @@ def analyse_categorical_counts(X_cat, emb_l=None, output_dir=""):
     return all_counts
 
 
-def dlrm_output_wrap(dlrm, X, lS_o, lS_i, T):
+def dlrm_output_wrap(dlrm, X, sparse_features_offsets, sparse_features_indices, T):
 
     all_feat_vec = []
     all_cat_vec = []
@@ -384,7 +384,7 @@ def dlrm_output_wrap(dlrm, X, lS_o, lS_i, T):
 
     z_size = len(dlrm.top_l)
 
-    x = dlrm.apply_mlp(X, dlrm.bot_l)
+    x = dlrm.apply_mlp(X, dlrm.mlp_bot)
     # debug prints
     # print("intermediate")
     # print(x[0].detach().cpu().numpy())
@@ -393,7 +393,7 @@ def dlrm_output_wrap(dlrm, X, lS_o, lS_i, T):
     #    all_X.append(x[0].detach().cpu().numpy())
 
     # process sparse features(using embeddings), resulting in a list of row vectors
-    ly = dlrm.apply_emb(lS_o, lS_i, dlrm.emb_l)
+    ly = dlrm.apply_emb(sparse_features_offsets, sparse_features_indices, dlrm.emb_l)
 
     for e in ly:
         # print(e.detach().cpu().numpy())
@@ -472,7 +472,7 @@ def create_umap_data(dlrm, data_ld, max_size=50000, offset=0, info=""):
     for i in range(0, z_size):
         all_z.append([])
 
-    for j, (X, lS_o, lS_i, T) in enumerate(data_ld):
+    for j, (X, sparse_features_offsets, sparse_features_indices, T) in enumerate(data_ld):
 
         if j < offset:
             continue
@@ -480,7 +480,7 @@ def create_umap_data(dlrm, data_ld, max_size=50000, offset=0, info=""):
         if j >= max_size + offset:
             break
 
-        af, x, cat, t, c, z, p = dlrm_output_wrap(dlrm, X, lS_o, lS_i, T)
+        af, x, cat, t, c, z, p = dlrm_output_wrap(dlrm, X, sparse_features_offsets, sparse_features_indices, T)
 
         all_features.append(af)
         all_X.append(x)
@@ -1169,8 +1169,8 @@ if __name__ == "__main__":
                 142572,
             ]
         )
-        ln_bot = np.array([13, 512, 256, 64, 16])
-        ln_top = np.array([367, 512, 256, 1])
+        layers_mlp_bot = np.array([13, 512, 256, 64, 16])
+        layers_mlp_top = np.array([367, 512, 256, 1])
 
     elif args.dataset == "terabyte":
 
@@ -1207,8 +1207,8 @@ if __name__ == "__main__":
                     36,
                 ]
             )
-            ln_bot = np.array([13, 512, 256, 64])
-            ln_top = np.array([415, 512, 512, 256, 1])
+            layers_mlp_bot = np.array([13, 512, 256, 64])
+            layers_mlp_top = np.array([415, 512, 512, 256, 1])
         elif args.max_ind_range == 40000000:
             # 3. Criteo Terabyte MLPerf training (see ./bench/run_and_time.sh --max-in-range=40000000)
             m_spa = 128
@@ -1242,8 +1242,8 @@ if __name__ == "__main__":
                     36,
                 ]
             )
-            ln_bot = np.array([13, 512, 256, 128])
-            ln_top = np.array([479, 1024, 1024, 512, 256, 1])
+            layers_mlp_bot = np.array([13, 512, 256, 128])
+            layers_mlp_top = np.array([479, 1024, 1024, 512, 256, 1])
         else:
             raise ValueError("only --max-in-range 10M or 40M is supported")
     else:
@@ -1257,12 +1257,12 @@ if __name__ == "__main__":
     dlrm = DLRM_Net(
         m_spa,
         ln_emb,
-        ln_bot,
-        ln_top,
+        layers_mlp_bot,
+        layers_mlp_top,
         arch_interaction_op="dot",
         arch_interaction_itself=False,
         sigmoid_bot=-1,
-        sigmoid_top=ln_top.size - 2,
+        sigmoid_top=layers_mlp_top.size - 2,
         sync_dense_params=True,
         loss_threshold=0.0,
         ndevices=-1,

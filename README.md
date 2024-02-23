@@ -216,7 +216,7 @@ DLRM_Net(
     (1): EmbeddingBag(3, 2, mode=sum)
     (2): EmbeddingBag(2, 2, mode=sum)
   )
-  (bot_l): Sequential(
+  (mlp_bot): Sequential(
     (0): Linear(in_features=4, out_features=3, bias=True)
     (1): ReLU()
     (2): Linear(in_features=3, out_features=2, bias=True)

@@ -192,9 +192,9 @@ def concatCriteoAdData(
     if memory_map:
         # dataset break up per fea
         # tar_fea = 1   # single target
-        den_fea = 13  # 13 dense  features
+        num_dense_features = 13  # 13 dense  features
         spa_fea = 26  # 26 sparse features
-        # tad_fea = tar_fea + den_fea
+        # tad_fea = tar_fea + num_dense_features
         # tot_fea = tad_fea + spa_fea
         # create offset per file
         offset_per_file = np.array([0] + [x for x in total_per_file])
@@ -202,7 +202,7 @@ def concatCriteoAdData(
             offset_per_file[i + 1] += offset_per_file[i]
 
         # Approach 1, 2 and 3 use indices, while Approach 4 does not use them
-        # dsesto removed approaches 1, 2 and 3, which were commented out in master
+        # (dsesto) removed approaches 1, 2 and 3, which were commented out in master
         # Approach 4: Fisher-Yates-Rao (FYR) shuffle algorithm
         # 1st pass of FYR shuffle
         # check if data already exists
@@ -234,7 +234,7 @@ def concatCriteoAdData(
                 filename_j_d = npzfile + "_{0}_intermediate_d".format(j)
                 filename_j_s = npzfile + "_{0}_intermediate_s".format(j)
                 np.save(filename_j_y, np.zeros((total_per_file[j])))
-                np.save(filename_j_d, np.zeros((total_per_file[j], den_fea)))
+                np.save(filename_j_d, np.zeros((total_per_file[j], num_dense_features)))
                 np.save(filename_j_s, np.zeros((total_per_file[j], spa_fea)))
             # start processing files
             total_counter = [0] * days

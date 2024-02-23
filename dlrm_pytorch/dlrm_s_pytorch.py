@@ -57,23 +57,23 @@ def time_wrap(use_gpu):
     return time.time()
 
 
-def dlrm_wrap(X, lS_o, lS_i, use_gpu, device, ndevices=1):
+def dlrm_wrap(X, sparse_features_offsets, sparse_features_indices, use_gpu, device, ndevices=1):
     with record_function("DLRM forward"):
         if use_gpu:  # .cuda()
-            # lS_i can be either a list of tensors or a stacked tensor.
+            # sparse_features_indices can be either a list of tensors or a stacked tensor.
             # Handle each case below:
             if ndevices == 1:
-                lS_i = (
-                    [S_i.to(device) for S_i in lS_i]
-                    if isinstance(lS_i, list)
-                    else lS_i.to(device)
+                sparse_features_indices = (
+                    [S_i.to(device) for S_i in sparse_features_indices]
+                    if isinstance(sparse_features_indices, list)
+                    else sparse_features_indices.to(device)
                 )
-                lS_o = (
-                    [S_o.to(device) for S_o in lS_o]
-                    if isinstance(lS_o, list)
-                    else lS_o.to(device)
+                sparse_features_offsets = (
+                    [S_o.to(device) for S_o in sparse_features_offsets]
+                    if isinstance(sparse_features_offsets, list)
+                    else sparse_features_offsets.to(device)
                 )
-        return dlrm(X.to(device), lS_o, lS_i)
+        return dlrm(X.to(device), sparse_features_offsets, sparse_features_indices)
 
 
 def loss_fn_wrap(Z, T, use_gpu, device):
@@ -220,114 +220,114 @@ def run():
         print("Using CPU...")
 
     ### prepare training data ###
-    ln_bot = np.fromstring(args.arch_mlp_bot, dtype=int, sep="-")
+    layers_mlp_bot = np.fromstring(args.arch_mlp_bot, dtype=int, sep="-")
     # input data
 
     if args.data_generation == "dataset":
         train_data, train_ld, test_data, test_ld = dp.make_criteo_data_and_loaders(args)
-        table_feature_map = {idx: idx for idx in range(len(train_data.counts))}
+        # table_feature_map = {idx: idx for idx in range(len(train_data.counts))} (dsesto) unused
         nbatches = args.num_batches if args.num_batches > 0 else len(train_ld)
         nbatches_test = len(test_ld)
 
-        ln_emb = train_data.counts
+        layers_embedding = train_data.counts
         # enforce maximum limit on number of vectors per embedding
         if args.max_ind_range > 0:
-            ln_emb = np.array(
+            layers_embedding = np.array(
                 list(
                     map(
                         lambda x: x if x < args.max_ind_range else args.max_ind_range,
-                        ln_emb,
+                        layers_embedding,
                     )
                 )
             )
         else:
-            ln_emb = np.array(ln_emb)
-        m_den = train_data.m_den
-        ln_bot[0] = m_den
+            layers_embedding = np.array(layers_embedding)
+        num_dense_features = train_data.num_dense_features
+        layers_mlp_bot[0] = num_dense_features
     elif args.data_generation == "internal":
         if not has_internal_libs:
             raise Exception("Internal libraries are not available.")
         NUM_BATCHES = 5000
         nbatches = args.num_batches if args.num_batches > 0 else NUM_BATCHES
         train_ld,feature_to_num_embeddings = fbDataLoader(args.data_size,nbatches)
-        ln_emb = np.array(list(feature_to_num_embeddings.values()))
-        m_den = ln_bot[0]
+        layers_embedding = np.array(list(feature_to_num_embeddings.values()))
+        num_dense_features = layers_mlp_bot[0]
     else:
         raise ValueError("Not supported anymore.")
 
-    args.ln_emb = ln_emb.tolist()
+    args.layers_embedding = layers_embedding.tolist()
 
     ### parse command line arguments ###
-    m_spa = args.arch_sparse_feature_size
-    ln_emb = np.asarray(ln_emb)
-    num_fea = ln_emb.size + 1  # num sparse + num dense features
+    embedding_size = args.arch_sparse_feature_size
+    layers_embedding = np.asarray(layers_embedding)
+    num_features = layers_embedding.size + 1  # num sparse + num dense features
 
-    m_den_out = ln_bot[ln_bot.size - 1]
+    mlp_bot_output_size = layers_mlp_bot[layers_mlp_bot.size - 1]
     if args.arch_interaction_op == "dot":
         # approach 1: all
-        # num_int = num_fea * num_fea + m_den_out
+        # num_interactions = num_features * num_features + mlp_bot_output_size
         # approach 2: unique
         if args.arch_interaction_itself:
-            num_int = (num_fea * (num_fea + 1)) // 2 + m_den_out
+            num_interactions = (num_features * (num_features + 1)) // 2 + mlp_bot_output_size
         else:
-            num_int = (num_fea * (num_fea - 1)) // 2 + m_den_out
+            num_interactions = (num_features * (num_features - 1)) // 2 + mlp_bot_output_size
     elif args.arch_interaction_op == "cat":
-        num_int = num_fea * m_den_out
+        num_interactions = num_features * mlp_bot_output_size
     else:
         sys.exit(
             "ERROR: --arch-interaction-op="
             + args.arch_interaction_op
             + " is not supported"
         )
-    arch_mlp_top_adjusted = str(num_int) + "-" + args.arch_mlp_top
-    ln_top = np.fromstring(arch_mlp_top_adjusted, dtype=int, sep="-")
+    arch_mlp_top_adjusted = str(num_interactions) + "-" + args.arch_mlp_top
+    layers_mlp_top = np.fromstring(arch_mlp_top_adjusted, dtype=int, sep="-")
 
     # sanity check: feature sizes and mlp dimensions must match
-    if m_den != ln_bot[0]:
+    if num_dense_features != layers_mlp_bot[0]:
         sys.exit(
             "ERROR: arch-dense-feature-size "
-            + str(m_den)
+            + str(num_dense_features)
             + " does not match first dim of bottom mlp "
-            + str(ln_bot[0])
+            + str(layers_mlp_bot[0])
         )
     if args.qr_flag:
-        if args.qr_operation == "concat" and 2 * m_spa != m_den_out:
+        if args.qr_operation == "concat" and 2 * embedding_size != mlp_bot_output_size:
             sys.exit(
                 "ERROR: 2 arch-sparse-feature-size "
-                + str(2 * m_spa)
+                + str(2 * embedding_size)
                 + " does not match last dim of bottom mlp "
-                + str(m_den_out)
+                + str(mlp_bot_output_size)
                 + " (note that the last dim of bottom mlp must be 2x the embedding dim)"
             )
-        if args.qr_operation != "concat" and m_spa != m_den_out:
+        if args.qr_operation != "concat" and embedding_size != mlp_bot_output_size:
             sys.exit(
                 "ERROR: arch-sparse-feature-size "
-                + str(m_spa)
+                + str(embedding_size)
                 + " does not match last dim of bottom mlp "
-                + str(m_den_out)
+                + str(mlp_bot_output_size)
             )
     else:
-        if m_spa != m_den_out:
+        if embedding_size != mlp_bot_output_size:
             sys.exit(
                 "ERROR: arch-sparse-feature-size "
-                + str(m_spa)
+                + str(embedding_size)
                 + " does not match last dim of bottom mlp "
-                + str(m_den_out)
+                + str(mlp_bot_output_size)
             )
-    if num_int != ln_top[0]:
+    if num_interactions != layers_mlp_top[0]:
         sys.exit(
             "ERROR: # of feature interactions "
-            + str(num_int)
+            + str(num_interactions)
             + " does not match first dimension of top mlp "
-            + str(ln_top[0])
+            + str(layers_mlp_top[0])
         )
 
     # assign mixed dimensions if applicable
     if args.md_flag:
-        m_spa = md_solver(
-            torch.tensor(ln_emb),
+        embedding_size = md_solver(
+            torch.tensor(layers_embedding),
             args.md_temperature,  # alpha
-            d0=m_spa,
+            d0=embedding_size,
             round_dim=args.md_round_dims,
         ).tolist()
 
@@ -335,37 +335,38 @@ def run():
     if args.debug_mode:
         print("model arch:")
         print(
-            "mlp top arch "
-            + str(ln_top.size - 1)
+            "mlp top arch: "
+            + str(layers_mlp_top.size - 1)
             + " layers, with input to output dimensions:"
         )
-        print(ln_top)
+        print(layers_mlp_top)
         print("# of interactions")
-        print(num_int)
+        print(num_interactions)
         print(
-            "mlp bot arch "
-            + str(ln_bot.size - 1)
+            "mlp bot arch: "
+            + str(layers_mlp_bot.size - 1)
             + " layers, with input to output dimensions:"
         )
-        print(ln_bot)
+        print(layers_mlp_bot)
         print("# of features (sparse and dense)")
-        print(num_fea)
+        print(num_features)
         print("dense feature size")
-        print(m_den)
+        print(num_dense_features)
         print("sparse feature size")
-        print(m_spa)
+        print(embedding_size)
         print(
             "# of embeddings (= # of sparse features) "
-            + str(ln_emb.size)
+            + str(layers_embedding.size)
             + ", with dimensions "
-            + str(m_spa)
+            + str(embedding_size)
             + "x:"
         )
-        print(ln_emb)
+        print(layers_embedding)
 
+        print()
         print("data (inputs and targets):")
         for j, inputBatch in enumerate(train_ld):
-            X, lS_o, lS_i, T, W, CBPP = unpack_batch(inputBatch)
+            X, sparse_features_offsets, sparse_features_indices, T, W, CBPP = unpack_batch(inputBatch)
 
             torch.set_printoptions(precision=4)
             # early exit if nbatches was set by the user and has been exceeded
@@ -378,17 +379,17 @@ def run():
                 torch.IntTensor(
                     [
                         np.diff(
-                            S_o.detach().cpu().tolist() + list(lS_i[i].shape)
+                            S_o.detach().cpu().tolist() + list(sparse_features_indices[i].shape)
                         ).tolist()
-                        for i, S_o in enumerate(lS_o)
+                        for i, S_o in enumerate(sparse_features_offsets)
                     ]
                 )
             )
-            print([S_i.detach().cpu() for S_i in lS_i])
+            print([S_i.detach().cpu() for S_i in sparse_features_indices])
             print(T.detach().cpu())
 
     global ndevices
-    ndevices = min(ngpus, args.mini_batch_size, num_fea - 1) if use_gpu else -1
+    ndevices = min(ngpus, args.mini_batch_size, num_features - 1) if use_gpu else -1
 
     ### construct the neural network specified above ###
     # WARNING: to obtain exactly the same initialization for
@@ -396,14 +397,14 @@ def run():
     # np.random.seed(args.numpy_rand_seed)
     global dlrm
     dlrm = DLRM_Net(
-        m_spa,
-        ln_emb,
-        ln_bot,
-        ln_top,
+        embedding_size,
+        layers_embedding,
+        layers_mlp_bot,
+        layers_mlp_top,
         arch_interaction_op=args.arch_interaction_op,
         arch_interaction_itself=args.arch_interaction_itself,
         sigmoid_bot=-1,
-        sigmoid_top=ln_top.size - 2,
+        sigmoid_top=layers_mlp_top.size - 2,
         sync_dense_params=args.sync_dense_params,
         loss_threshold=args.loss_threshold,
         ndevices=ndevices,
@@ -431,13 +432,13 @@ def run():
         # the embeddings are distributed and use model parallelism
         dlrm = dlrm.to(device)  # .cuda()
         if dlrm.ndevices > 1:
-            dlrm.emb_l, dlrm.v_W_l = dlrm.create_emb(
-                m_spa, ln_emb, args.weighted_pooling
+            dlrm.embeddings, dlrm.embeddings_per_sample_weights = dlrm.create_emb(
+                embedding_size, layers_embedding, args.weighted_pooling
             )
         else:
             if dlrm.weighted_pooling == "fixed":
-                for k, w in enumerate(dlrm.v_W_l):
-                    dlrm.v_W_l[k] = w.cuda()
+                for k, w in enumerate(dlrm.embeddings_per_sample_weights):
+                    dlrm.embeddings_per_sample_weights[k] = w.cuda()
 
     if not args.inference_only:
         if use_gpu and args.optimizer in ["rwsadagrad", "adagrad"]:
@@ -454,18 +455,18 @@ def run():
             if True  # TODO (dsesto): Not sure if this condition is equivalent to the previous "ext_dist.my_size == 1"
             else [
                 {
-                    "params": [p for emb in dlrm.emb_l for p in emb.parameters()],
+                    "params": [p for emb in dlrm.embeddings for p in emb.parameters()],
                     "lr": args.learning_rate,
                 },
                 # TODO check this lr setup
                 # bottom mlp has no data parallelism
                 # need to check how do we deal with top mlp
                 {
-                    "params": dlrm.bot_l.parameters(),
+                    "params": dlrm.mlp_bot.parameters(),
                     "lr": args.learning_rate,
                 },
                 {
-                    "params": dlrm.top_l.parameters(),
+                    "params": dlrm.mlp_top.parameters(),
                     "lr": args.learning_rate,
                 },
             ]
@@ -590,7 +591,7 @@ def run():
                     if j < skip_upto_batch:
                         continue
 
-                    X, lS_o, lS_i, T, W, CBPP = unpack_batch(inputBatch)
+                    X, sparse_features_offsets, sparse_features_indices, T, W, CBPP = unpack_batch(inputBatch)
 
                     t1 = time_wrap(use_gpu)
 
@@ -603,8 +604,8 @@ def run():
                     # forward pass
                     Z = dlrm_wrap(
                         X,
-                        lS_o,
-                        lS_i,
+                        sparse_features_offsets,
+                        sparse_features_indices,
                         use_gpu,
                         device,
                         ndevices=ndevices,

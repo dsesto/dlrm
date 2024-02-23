@@ -52,11 +52,10 @@ class CriteoDataset(Dataset):
         dataset_multiprocessing=False,
     ):
         # dataset
-        # tar_fea = 1   # single target
-        den_fea = 13  # 13 dense  features
-        # spa_fea = 26  # 26 sparse features
-        # tad_fea = tar_fea + den_fea
-        # tot_fea = tad_fea + spa_fea
+        # num_target_features = 1   # single target
+        num_dense_features = 13  # 13 dense features
+        # num_sparse_features = 26  # 26 sparse features
+        # num_total_features = num_target_features + num_dense_features + num_sparse_features
         if dataset == "kaggle":
             days = 7
             out_file = "kaggleAdDisplayChallenge_processed"
@@ -137,47 +136,12 @@ class CriteoDataset(Dataset):
             else:
                 sys.exit("ERROR: dataset split is neither none, nor train or test.")
 
-            """
-            # text
-            print("text")
-            for i in range(days):
-                fi = self.npzfile + "_{0}".format(i)
-                with open(fi) as data:
-                    ttt = 0; nnn = 0
-                    for _j, line in enumerate(data):
-                        ttt +=1
-                        if np.int32(line[0]) > 0:
-                            nnn +=1
-                    print("day=" + str(i) + " total=" + str(ttt) + " non-zeros="
-                          + str(nnn) + " ratio=" +str((nnn * 100.) / ttt) + "%")
-            # processed
-            print("processed")
-            for i in range(days):
-                fi = self.npzfile + "_{0}_processed.npz".format(i)
-                with np.load(fi) as data:
-                    yyy = data["y"]
-                ttt = len(yyy)
-                nnn = np.count_nonzero(yyy)
-                print("day=" + str(i) + " total=" + str(ttt) + " non-zeros="
-                      + str(nnn) + " ratio=" +str((nnn * 100.) / ttt) + "%")
-            # reordered
-            print("reordered")
-            for i in range(days):
-                fi = self.npzfile + "_{0}_reordered.npz".format(i)
-                with np.load(fi) as data:
-                    yyy = data["y"]
-                ttt = len(yyy)
-                nnn = np.count_nonzero(yyy)
-                print("day=" + str(i) + " total=" + str(ttt) + " non-zeros="
-                      + str(nnn) + " ratio=" +str((nnn * 100.) / ttt) + "%")
-            """
-
             # load unique counts
             with np.load(self.d_path + self.d_file + "_fea_count.npz") as data:
                 self.counts = data["counts"]
-            self.m_den = den_fea  # X_int.shape[1]
+            self.num_dense_features = num_dense_features  # X_int.shape[1]
             self.n_emb = len(self.counts)
-            print("Sparse features= %d, Dense features= %d" % (self.n_emb, self.m_den))
+            print("Sparse features= %d, Dense features= %d" % (self.n_emb, self.num_dense_features))
 
             # Load the test data
             # Only a single day is used for testing
@@ -196,9 +160,9 @@ class CriteoDataset(Dataset):
                 X_cat = data["X_cat"]  # categorical feature
                 y = data["y"]  # target
                 self.counts = data["counts"]
-            self.m_den = X_int.shape[1]  # den_fea
+            self.num_dense_features = X_int.shape[1]  # num_dense_features
             self.n_emb = len(self.counts)
-            print("Sparse fea = %d, Dense fea = %d" % (self.n_emb, self.m_den))
+            print("Sparse fea = %d, Dense fea = %d" % (self.n_emb, self.num_dense_features))
 
             # create reordering
             indices = np.arange(len(y))
@@ -318,46 +282,18 @@ def collate_wrapper_criteo_offset(list_of_tuples):
     transposed_data = list(zip(*list_of_tuples))
     X_int = torch.log(torch.tensor(transposed_data[0], dtype=torch.float) + 1)
     X_cat = torch.tensor(transposed_data[1], dtype=torch.long)
-    T = torch.tensor(transposed_data[2], dtype=torch.float32).view(-1, 1)
+    y = torch.tensor(transposed_data[2], dtype=torch.float32).view(-1, 1)
 
     batchSize = X_cat.shape[0]
     featureCnt = X_cat.shape[1]
 
-    lS_i = [X_cat[:, i] for i in range(featureCnt)]
-    lS_o = [torch.tensor(range(batchSize)) for _ in range(featureCnt)]
+    # NOTE: (dsesto)
+    # Offset of sparse (categorical) features for the EmbeddingBag
+    sparse_features_offsets = [torch.tensor(range(batchSize)) for _ in range(featureCnt)]
+    # Indices of sparse (categorical) features for the EmbeddingBag
+    sparse_features_indices = [X_cat[:, i] for i in range(featureCnt)]
 
-    return X_int, torch.stack(lS_o), torch.stack(lS_i), T
-
-
-# Conversion from offset to length
-def offset_to_length_converter(lS_o, lS_i):
-    def diff(tensor):
-        return tensor[1:] - tensor[:-1]
-
-    return torch.stack(
-        [
-            diff(torch.cat((S_o, torch.tensor(lS_i[ind].shape))).int())
-            for ind, S_o in enumerate(lS_o)
-        ]
-    )
-
-
-def collate_wrapper_criteo_length(list_of_tuples):
-    # where each tuple is (X_int, X_cat, y)
-    transposed_data = list(zip(*list_of_tuples))
-    X_int = torch.log(torch.tensor(transposed_data[0], dtype=torch.float) + 1)
-    X_cat = torch.tensor(transposed_data[1], dtype=torch.long)
-    T = torch.tensor(transposed_data[2], dtype=torch.float32).view(-1, 1)
-
-    batchSize = X_cat.shape[0]
-    featureCnt = X_cat.shape[1]
-
-    lS_i = torch.stack([X_cat[:, i] for i in range(featureCnt)])
-    lS_o = torch.stack([torch.tensor(range(batchSize)) for _ in range(featureCnt)])
-
-    lS_l = offset_to_length_converter(lS_o, lS_i)
-
-    return X_int, lS_l, lS_i, T
+    return X_int, torch.stack(sparse_features_offsets), torch.stack(sparse_features_indices), y
 
 
 def make_criteo_data_and_loaders(args, offset_to_length_converter=False):
@@ -386,8 +322,6 @@ def make_criteo_data_and_loaders(args, offset_to_length_converter=False):
     )
 
     collate_wrapper_criteo = collate_wrapper_criteo_offset
-    if offset_to_length_converter:
-        collate_wrapper_criteo = collate_wrapper_criteo_length
 
     train_loader = torch.utils.data.DataLoader(
         train_data,

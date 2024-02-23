@@ -11,97 +11,13 @@ from tricks.qr_embedding_bag import QREmbeddingBag
 
 
 class DLRM_Net(nn.Module):
-    def create_mlp(self, ln, sigmoid_layer):
-        # build MLP layer by layer
-        layers = nn.ModuleList()
-        for i in range(0, ln.size - 1):
-            n = ln[i]
-            m = ln[i + 1]
-
-            # construct fully connected operator
-            LL = nn.Linear(int(n), int(m), bias=True)
-
-            # initialize the weights
-            # with torch.no_grad():
-            # custom Xavier input, output or two-sided fill
-            mean = 0.0  # std_dev = np.sqrt(variance)
-            std_dev = np.sqrt(2 / (m + n))  # np.sqrt(1 / m) # np.sqrt(1 / n)
-            W = np.random.normal(mean, std_dev, size=(m, n)).astype(np.float32)
-            std_dev = np.sqrt(1 / m)  # np.sqrt(2 / (m + 1))
-            bt = np.random.normal(mean, std_dev, size=m).astype(np.float32)
-            # approach 1
-            LL.weight.data = torch.tensor(W, requires_grad=True)
-            LL.bias.data = torch.tensor(bt, requires_grad=True)
-            # approach 2
-            # LL.weight.data.copy_(torch.tensor(W))
-            # LL.bias.data.copy_(torch.tensor(bt))
-            # approach 3
-            # LL.weight = Parameter(torch.tensor(W),requires_grad=True)
-            # LL.bias = Parameter(torch.tensor(bt),requires_grad=True)
-            layers.append(LL)
-
-            # construct sigmoid or relu operator
-            if i == sigmoid_layer:
-                layers.append(nn.Sigmoid())
-            else:
-                layers.append(nn.ReLU())
-
-        # approach 1: use ModuleList
-        # return layers
-        # approach 2: use Sequential container to wrap all layers
-        return torch.nn.Sequential(*layers)
-
-    def create_emb(self, m, ln, weighted_pooling=None):
-        emb_l = nn.ModuleList()
-        v_W_l = []
-        for i in range(0, ln.size):
-            n = ln[i]
-
-            # construct embedding operator
-            if self.qr_flag and n > self.qr_threshold:
-                EE = QREmbeddingBag(
-                    n,
-                    m,
-                    self.qr_collisions,
-                    operation=self.qr_operation,
-                    mode="sum",
-                    sparse=True,
-                )
-            elif self.md_flag and n > self.md_threshold:
-                base = max(m)
-                _m = m[i] if n > self.md_threshold else base
-                EE = PrEmbeddingBag(n, _m, base)
-                # use np initialization as below for consistency...
-                W = np.random.uniform(
-                    low=-np.sqrt(1 / n), high=np.sqrt(1 / n), size=(n, _m)
-                ).astype(np.float32)
-                EE.embs.weight.data = torch.tensor(W, requires_grad=True)
-            else:
-                EE = nn.EmbeddingBag(n, m, mode="sum", sparse=True)
-                # initialize embeddings
-                # nn.init.uniform_(EE.weight, a=-np.sqrt(1 / n), b=np.sqrt(1 / n))
-                W = np.random.uniform(
-                    low=-np.sqrt(1 / n), high=np.sqrt(1 / n), size=(n, m)
-                ).astype(np.float32)
-                # approach 1
-                EE.weight.data = torch.tensor(W, requires_grad=True)
-                # approach 2
-                # EE.weight.data.copy_(torch.tensor(W))
-                # approach 3
-                # EE.weight = Parameter(torch.tensor(W),requires_grad=True)
-            if weighted_pooling is None:
-                v_W_l.append(None)
-            else:
-                v_W_l.append(torch.ones(n, dtype=torch.float32))
-            emb_l.append(EE)
-        return emb_l, v_W_l
 
     def __init__(
         self,
-        m_spa=None,
-        ln_emb=None,
-        ln_bot=None,
-        ln_top=None,
+        embedding_size=None,
+        layers_embedding=None,
+        layers_mlp_bot=None,
+        layers_mlp_top=None,
         arch_interaction_op=None,
         arch_interaction_itself=False,
         sigmoid_bot=-1,
@@ -122,10 +38,10 @@ class DLRM_Net(nn.Module):
         super(DLRM_Net, self).__init__()
 
         if (
-            (m_spa is not None)
-            and (ln_emb is not None)
-            and (ln_bot is not None)
-            and (ln_top is not None)
+            (embedding_size is not None)
+            and (layers_embedding is not None)
+            and (layers_mlp_bot is not None)
+            and (layers_mlp_top is not None)
             and (arch_interaction_op is not None)
         ):
 
@@ -157,15 +73,15 @@ class DLRM_Net(nn.Module):
 
             # create operators
             if ndevices <= 1:
-                self.emb_l, w_list = self.create_emb(m_spa, ln_emb, weighted_pooling)
+                self.embeddings, w_list = self.create_emb(embedding_size, layers_embedding, weighted_pooling)
                 if self.weighted_pooling == "learned":
-                    self.v_W_l = nn.ParameterList()
+                    self.embeddings_per_sample_weights = nn.ParameterList()
                     for w in w_list:
-                        self.v_W_l.append(Parameter(w))
+                        self.embeddings_per_sample_weights.append(Parameter(w))
                 else:
-                    self.v_W_l = w_list
-            self.bot_l = self.create_mlp(ln_bot, sigmoid_bot)
-            self.top_l = self.create_mlp(ln_top, sigmoid_top)
+                    self.embeddings_per_sample_weights = w_list
+            self.mlp_bot = self.create_mlp(layers_mlp_bot, sigmoid_bot)
+            self.mlp_top = self.create_mlp(layers_mlp_top, sigmoid_top)
 
             # quantization
             self.quantize_emb = False
@@ -187,6 +103,91 @@ class DLRM_Net(nn.Module):
                     "ERROR: --loss-function=" + self.loss_function + " is not supported"
                 )
 
+    def create_mlp(self, layers, sigmoid_layer):
+        # build MLP layer by layer
+        mlp = nn.ModuleList()
+        for i in range(0, layers.size - 1):
+            layer_input_size = layers[i]
+            layer_output_size = layers[i + 1]
+
+            # construct fully connected operator
+            LL = nn.Linear(int(layer_input_size), int(layer_output_size), bias=True)
+
+            # initialize the weights
+            # with torch.no_grad():
+            # custom Xavier input, output or two-sided fill
+            mean = 0.0  # std_dev = np.sqrt(variance)
+            std_dev = np.sqrt(2 / (layer_output_size + layer_input_size))  # np.sqrt(1 / layer_output_size) # np.sqrt(1 / layer_input_size)
+            W = np.random.normal(mean, std_dev, size=(layer_output_size, layer_input_size)).astype(np.float32)
+            std_dev = np.sqrt(1 / layer_output_size)  # np.sqrt(2 / (layer_output_size + 1))
+            bt = np.random.normal(mean, std_dev, size=layer_output_size).astype(np.float32)
+            # approach 1
+            LL.weight.data = torch.tensor(W, requires_grad=True)
+            LL.bias.data = torch.tensor(bt, requires_grad=True)
+            # approach 2
+            # LL.weight.data.copy_(torch.tensor(W))
+            # LL.bias.data.copy_(torch.tensor(bt))
+            # approach 3
+            # LL.weight = Parameter(torch.tensor(W),requires_grad=True)
+            # LL.bias = Parameter(torch.tensor(bt),requires_grad=True)
+            mlp.append(LL)
+
+            # construct sigmoid or relu operator
+            if i == sigmoid_layer:
+                mlp.append(nn.Sigmoid())
+            else:
+                mlp.append(nn.ReLU())
+
+        # approach 1: use ModuleList
+        # return mlp
+        # approach 2: use Sequential container to wrap all mlp
+        return torch.nn.Sequential(*mlp)
+
+    def create_emb(self, embedding_size, layers_embedding, weighted_pooling=None):
+        embeddings = nn.ModuleList()
+        embeddings_per_sample_weights = []
+        for i in range(0, layers_embedding.size):
+            feature_vocab_size = layers_embedding[i]
+
+            # construct embedding operator
+            if self.qr_flag and feature_vocab_size > self.qr_threshold:
+                EE = QREmbeddingBag(
+                    feature_vocab_size,
+                    embedding_size,
+                    self.qr_collisions,
+                    operation=self.qr_operation,
+                    mode="sum",
+                    sparse=True,
+                )
+            elif self.md_flag and feature_vocab_size > self.md_threshold:
+                base = max(embedding_size)
+                _m = embedding_size[i] if feature_vocab_size > self.md_threshold else base
+                EE = PrEmbeddingBag(feature_vocab_size, _m, base)
+                # use np initialization as below for consistency...
+                W = np.random.uniform(
+                    low=-np.sqrt(1 / feature_vocab_size), high=np.sqrt(1 / feature_vocab_size), size=(feature_vocab_size, _m)
+                ).astype(np.float32)
+                EE.embs.weight.data = torch.tensor(W, requires_grad=True)
+            else:
+                EE = nn.EmbeddingBag(feature_vocab_size, embedding_size, mode="sum", sparse=True)
+                # initialize embeddings
+                # nn.init.uniform_(EE.weight, a=-np.sqrt(1 / feature_vocab_size), b=np.sqrt(1 / feature_vocab_size))
+                W = np.random.uniform(
+                    low=-np.sqrt(1 / feature_vocab_size), high=np.sqrt(1 / feature_vocab_size), size=(feature_vocab_size, embedding_size)
+                ).astype(np.float32)
+                # approach 1
+                EE.weight.data = torch.tensor(W, requires_grad=True)
+                # approach 2
+                # EE.weight.data.copy_(torch.tensor(W))
+                # approach 3
+                # EE.weight = Parameter(torch.tensor(W),requires_grad=True)
+            if weighted_pooling is None:
+                embeddings_per_sample_weights.append(None)
+            else:
+                embeddings_per_sample_weights.append(torch.ones(feature_vocab_size, dtype=torch.float32))
+            embeddings.append(EE)
+        return embeddings, embeddings_per_sample_weights
+
     def apply_mlp(self, x, layers):
         # approach 1: use ModuleList
         # for layer in layers:
@@ -195,7 +196,7 @@ class DLRM_Net(nn.Module):
         # approach 2: use Sequential container to wrap all layers
         return layers(x)
 
-    def apply_emb(self, lS_o, lS_i, emb_l, v_W_l):
+    def apply_emb(self, sparse_features_offsets, sparse_features_indices, embeddings, embeddings_per_sample_weights):
         # WARNING: notice that we are processing the batch at once. We implicitly
         # assume that the data is laid out such that:
         # 1. each embedding is indexed with a group of sparse indices,
@@ -204,17 +205,17 @@ class DLRM_Net(nn.Module):
         # 3. for a list of embedding tables there is a list of batched lookups
 
         ly = []
-        for k, sparse_index_group_batch in enumerate(lS_i):
-            sparse_offset_group_batch = lS_o[k]
+        for k, sparse_index_group_batch in enumerate(sparse_features_indices):
+            sparse_offset_group_batch = sparse_features_offsets[k]
 
             # embedding lookup
             # We are using EmbeddingBag, which implicitly uses sum operator.
             # The embeddings are represented as tall matrices, with sum
             # happening vertically across 0 axis, resulting in a row vector
-            # E = emb_l[k]
+            # E = embeddings[k]
 
-            if v_W_l[k] is not None:
-                per_sample_weights = v_W_l[k].gather(0, sparse_index_group_batch)
+            if embeddings_per_sample_weights[k] is not None:
+                per_sample_weights = embeddings_per_sample_weights[k].gather(0, sparse_index_group_batch)
             else:
                 per_sample_weights = None
 
@@ -240,7 +241,7 @@ class DLRM_Net(nn.Module):
 
                 ly.append(QV)
             else:
-                E = emb_l[k]
+                E = embeddings[k]
                 V = E(
                     sparse_index_group_batch,
                     sparse_offset_group_batch,
@@ -255,20 +256,20 @@ class DLRM_Net(nn.Module):
     #  using quantizing functions from caffe2/aten/src/ATen/native/quantized/cpu
     def quantize_embedding(self, bits):
 
-        n = len(self.emb_l)
+        n = len(self.embeddings)
         self.emb_l_q = [None] * n
         for k in range(n):
             if bits == 4:
                 self.emb_l_q[k] = ops.quantized.embedding_bag_4bit_prepack(
-                    self.emb_l[k].weight
+                    self.embeddings[k].weight
                 )
             elif bits == 8:
                 self.emb_l_q[k] = ops.quantized.embedding_bag_byte_prepack(
-                    self.emb_l[k].weight
+                    self.embeddings[k].weight
                 )
             else:
                 return
-        self.emb_l = None
+        self.embeddings = None
         self.quantize_emb = True
         self.quantize_bits = bits
 
@@ -307,18 +308,18 @@ class DLRM_Net(nn.Module):
 
         return R
 
-    def forward(self, dense_x, lS_o, lS_i):
-        return self.sequential_forward(dense_x, lS_o, lS_i)
+    def forward(self, dense_x, sparse_features_offsets, sparse_features_indices):
+        return self.sequential_forward(dense_x, sparse_features_offsets, sparse_features_indices)
 
-    def sequential_forward(self, dense_x, lS_o, lS_i):
+    def sequential_forward(self, dense_x, sparse_features_offsets, sparse_features_indices):
         # process dense features (using bottom mlp), resulting in a row vector
-        x = self.apply_mlp(dense_x, self.bot_l)
+        x = self.apply_mlp(dense_x, self.mlp_bot)
         # debug prints
         # print("intermediate")
         # print(x.detach().cpu().numpy())
 
         # process sparse features(using embeddings), resulting in a list of row vectors
-        ly = self.apply_emb(lS_o, lS_i, self.emb_l, self.v_W_l)
+        ly = self.apply_emb(sparse_features_offsets, sparse_features_indices, self.embeddings, self.embeddings_per_sample_weights)
         # for y in ly:
         #     print(y.detach().cpu().numpy())
 
@@ -327,7 +328,7 @@ class DLRM_Net(nn.Module):
         # print(z.detach().cpu().numpy())
 
         # obtain probability of a click (using top mlp)
-        p = self.apply_mlp(z, self.top_l)
+        p = self.apply_mlp(z, self.mlp_top)
 
         # clamp output if needed
         if 0.0 < self.loss_threshold and self.loss_threshold < 1.0:
