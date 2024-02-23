@@ -2,6 +2,27 @@ Deep Learning Recommendation Model for Personalization and Recommendation System
 =================================================================================
 *Copyright (c) Facebook, Inc. and its affiliates.*
 
+dsesto notes:
+-------------
+This repository is a fork of Facebook Research's open-source implementation of
+the DLRM for CTR prediction.
+
+The repository has been cleaned to keep only the most relevant pieces for the
+current project we are working on. Stuff like distributed learning, synthetic
+data generation or metric reporting have been left out (although you can visit)
+intermediate commits to recover them if necessary.
+
+This version of the DLRM can be executed with Criteo's Kaggle dataset:
+
+```bash
+python3 dlrm_s_pytorch.py --arch-sparse-feature-size=16 \
+  --arch-mlp-bot="13-512-256-64-16" --arch-mlp-top="512-256-1" --data-generation=dataset \
+  --data-set=kaggle --raw-data-file=/path/to/kaggle/dataset.txt \
+  --processed-data-file=./input/kaggleAdDisplayChallenge_processed.npz \
+  --loss-function=bce --round-targets=True --learning-rate=0.1 --mini-batch-size=128 \
+  --print-freq=1024 --print-time --test-mini-batch-size=16384
+```
+
 Description:
 ------------
 An implementation of a deep learning recommendation model (DLRM).

@@ -61,14 +61,14 @@ import math
 import os
 import sys
 
-from dlrm_pytorch import dlrm_data_pytorch as dp
+import dlrm_data_pytorch as dp
 import hdbscan
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import umap
-from dlrm_pytorch.dlrm_s_pytorch import DLRM_Net
+from dlrm_s_pytorch import DLRM_Net
 
 from sklearn import manifold
 

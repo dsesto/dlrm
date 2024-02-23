@@ -36,7 +36,6 @@ except ImportError:
     has_internal_libs = False
 
 from torch.autograd.profiler import record_function
-from torch.utils.tensorboard import SummaryWriter
 
 # mixed-dimension trick
 from tricks.md_embedding_bag import md_solver
@@ -146,7 +145,6 @@ def inference(
             test_samp += mbs_test
 
     acc_test = test_accu / test_samp
-    writer.add_scalar("Test/Acc", acc_test, log_iter)
 
     model_metrics_dict = {
         "nepochs": args.nepochs,
@@ -174,7 +172,6 @@ def run():
     global args
     global nbatches
     global nbatches_test
-    global writer
     args = parser.parse_args()
 
     if args.weighted_pooling is not None:
@@ -572,7 +569,6 @@ def run():
     print("time/loss/accuracy (if enabled):")
 
     tb_file = "./" + args.tensor_board_filename
-    writer = SummaryWriter(tb_file)
 
     with torch.autograd.profiler.profile(
         args.enable_profiling, use_cuda=use_gpu, record_shapes=True
@@ -682,7 +678,6 @@ def run():
                         )
 
                         log_iter = nbatches * k + j + 1
-                        writer.add_scalar("Train/Loss", train_loss, log_iter)
 
                         total_iter = 0
                         total_samp = 0
