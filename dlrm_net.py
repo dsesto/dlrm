@@ -181,6 +181,10 @@ class DLRM_Net(nn.Module):
                 # EE.weight.data.copy_(torch.tensor(W))
                 # approach 3
                 # EE.weight = Parameter(torch.tensor(W),requires_grad=True)
+
+                # (dsesto) We could replace EmbeddingBag with Embedding, because their usage in this context is equivalent
+                # EE = nn.Embedding(feature_vocab_size, embedding_size, sparse=True)
+                # EE.weight.data = torch.tensor(W, requires_grad=True)
             if weighted_pooling is None:
                 embeddings_per_sample_weights.append(None)
             else:
@@ -242,11 +246,17 @@ class DLRM_Net(nn.Module):
                 ly.append(QV)
             else:
                 E = embeddings[k]
+                # EmbeddingBag
                 V = E(
                     sparse_index_group_batch,
                     sparse_offset_group_batch,
                     per_sample_weights=per_sample_weights,
                 )
+                # Embedding
+                # (dsesto) If using Embedding instead of EmbeddingBag, call the layer like this:
+                # V = E(
+                #     sparse_index_group_batch
+                # )
 
                 ly.append(V)
 

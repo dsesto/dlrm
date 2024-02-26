@@ -732,20 +732,6 @@ def run():
                 use_gpu,
             )
 
-    # profiling
-    if args.enable_profiling:
-        time_stamp = str(datetime.datetime.now()).replace(" ", "_")
-        with open("dlrm_s_pytorch" + time_stamp + "_shape.prof", "w") as prof_f:
-            prof_f.write(
-                prof.key_averages(group_by_input_shape=True).table(
-                    sort_by="self_cpu_time_total"
-                )
-            )
-        with open("dlrm_s_pytorch" + time_stamp + "_total.prof", "w") as prof_f:
-            prof_f.write(prof.key_averages().table(sort_by="self_cpu_time_total"))
-        prof.export_chrome_trace("dlrm_s_pytorch" + time_stamp + ".json")
-        # print(prof.key_averages().table(sort_by="cpu_time_total"))
-
     # plot compute graph
     if args.plot_compute_graph:
         sys.exit(
@@ -763,84 +749,6 @@ def run():
         for param in dlrm.parameters():
             print(param.detach().cpu().numpy())
 
-    # export the model in onnx
-    if args.save_onnx:
-        """
-        # workaround 1: tensor -> list
-        if torch.is_tensor(lS_i_onnx):
-            lS_i_onnx = [lS_i_onnx[j] for j in range(len(lS_i_onnx))]
-        # workaound 2: list -> tensor
-        lS_i_onnx = torch.stack(lS_i_onnx)
-        """
-        # debug prints
-        # print("inputs", X_onnx, lS_o_onnx, lS_i_onnx)
-        # print("output", dlrm_wrap(X_onnx, lS_o_onnx, lS_i_onnx, use_gpu, device))
-        dlrm_pytorch_onnx_file = "dlrm_s_pytorch.onnx"
-        batch_size = X_onnx.shape[0]
-        print("X_onnx.shape", X_onnx.shape)
-        if torch.is_tensor(lS_o_onnx):
-            print("lS_o_onnx.shape", lS_o_onnx.shape)
-        else:
-            for oo in lS_o_onnx:
-                print("oo.shape", oo.shape)
-        if torch.is_tensor(lS_i_onnx):
-            print("lS_i_onnx.shape", lS_i_onnx.shape)
-        else:
-            for ii in lS_i_onnx:
-                print("ii.shape", ii.shape)
-
-        # name inputs and outputs
-        o_inputs = (
-            ["offsets"]
-            if torch.is_tensor(lS_o_onnx)
-            else ["offsets_" + str(i) for i in range(len(lS_o_onnx))]
-        )
-        i_inputs = (
-            ["indices"]
-            if torch.is_tensor(lS_i_onnx)
-            else ["indices_" + str(i) for i in range(len(lS_i_onnx))]
-        )
-        all_inputs = ["dense_x"] + o_inputs + i_inputs
-        # debug prints
-        print("inputs", all_inputs)
-
-        # create dynamic_axis dictionaries
-        do_inputs = (
-            [{"offsets": {1: "batch_size"}}]
-            if torch.is_tensor(lS_o_onnx)
-            else [
-                {"offsets_" + str(i): {0: "batch_size"}} for i in range(len(lS_o_onnx))
-            ]
-        )
-        di_inputs = (
-            [{"indices": {1: "batch_size"}}]
-            if torch.is_tensor(lS_i_onnx)
-            else [
-                {"indices_" + str(i): {0: "batch_size"}} for i in range(len(lS_i_onnx))
-            ]
-        )
-        dynamic_axes = {"dense_x": {0: "batch_size"}, "pred": {0: "batch_size"}}
-        for do in do_inputs:
-            dynamic_axes.update(do)
-        for di in di_inputs:
-            dynamic_axes.update(di)
-        # debug prints
-        print(dynamic_axes)
-        # export model
-        torch.onnx.export(
-            dlrm,
-            (X_onnx, lS_o_onnx, lS_i_onnx),
-            dlrm_pytorch_onnx_file,
-            verbose=True,
-            opset_version=11,
-            input_names=all_inputs,
-            output_names=["pred"],
-            dynamic_axes=dynamic_axes,
-        )
-        # recover the model back
-        dlrm_pytorch_onnx = onnx.load("dlrm_s_pytorch.onnx")
-        # check the onnx model
-        onnx.checker.check_model(dlrm_pytorch_onnx)
     total_time_end = time_wrap(use_gpu)
 
 
